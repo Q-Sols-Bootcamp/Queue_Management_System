@@ -1,0 +1,29 @@
+# Ignore virtual environment directories
+venv/
+.venv/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+__pycache__
+**/__pycache__/*.pyc
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Database files
+*.sqlite3
+
+# Logs and local configuration files
+*.log
+*.env
+.DS_Store
+
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+.pytest_cache
