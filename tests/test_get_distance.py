@@ -12,6 +12,7 @@ from main import app
 from pydantic import BaseModel
 from datetime import timedelta, datetime
 from routes.get_distance import update_eta
+from schema.distance_models import *
 
 
 _off = text("SET FOREIGN_KEY_CHECKS = 0;")
@@ -67,11 +68,14 @@ async def test_update_eta_success(mocker):
     mocker.patch("utils.helpers.get_ETA", return_value=5)
 
     # test data
-    location_data = Location(latitude=27.0, longitude=69.0)
-    userid = user_data.id
+    user_request = UpdateEtaReaquest(
+        location = Location(latitude=27.0, longitude=69.0),
+        userid = user_data.id,
+    )
+    
 
     # request simulation
-    result = await update_eta(userid=userid, location=location_data, db=db)
+    result = await update_eta(request = user_request, db=db)
 
     assert result["success"] == True
     assert "ETA updated successfully" in result["data"]["message"]
@@ -90,16 +94,18 @@ async def test_update_eta_user_not_found(mocker):
     db.commit()
 
     # test data
-    test_id = 21
-    test_location = Location(latitude= 21, longitude=22)
+    user_request = UpdateEtaReaquest(
+        userid= 21,
+        location = Location(latitude= 21, longitude=22)
+        )
 
     # check if user exists
-    user = db.query(UserData).filter(UserData.id == test_id).first()
+    user = db.query(UserData).filter(UserData.id == user_request.userid).first()
     assert user is None
 
     # request simulation
     try:
-        await update_eta(userid=test_id, location=test_location, db=db)
+        await update_eta(request = user_request, db=db)
         assert False, "Expected HTTPException"
     except HTTPException as e:
         assert e.status_code == 404
