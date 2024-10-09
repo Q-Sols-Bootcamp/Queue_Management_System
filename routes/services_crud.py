@@ -1,3 +1,4 @@
+
 from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends, HTTPException
 from database.models import UserData, Services, Counters
@@ -20,7 +21,7 @@ def create_response(data=None, success=True, error=None):
     }
 
 
-@router.post("/service", response_model=None)
+@router.post("", response_model=None)
 async def add_service(request: CreateServiceRequest, db: Session = Depends(get_db)):
     global settings  # Ensure we are modifying the global counters and global_counter
     _present= (
@@ -67,12 +68,12 @@ async def add_service(request: CreateServiceRequest, db: Session = Depends(get_d
 
     else:
         db.rollback()
-        raise HTTPException(status_code=500, detail=create_response(success=False, error={'message': 'error adding service'}))
+        raise HTTPException(status_code=500, detail='error adding service')
 
 
 
 # Update service details (name and/or no_of_counters)
-@router.put("/service", response_model=None)
+@router.put("", response_model=None)
 async def update_service(request: UpdateServiceRequest, db: Session = Depends(get_db)):
     global settings
     try:
@@ -80,12 +81,12 @@ async def update_service(request: UpdateServiceRequest, db: Session = Depends(ge
         service = db.query(Services).filter(Services.id == request.service_id).first()
         
         if not service:
-            raise HTTPException(status_code=404, detail=create_response(success=False, error={'message': 'Service not found'}))
+            raise HTTPException(status_code=404, detail='Service not found')
 
         # Check if there are active users in the service queues before updating
         active_users = db.query(UserData).filter(UserData.service_id == request.service_id).count()
         if active_users > 0:
-            raise HTTPException(status_code=400, detail=create_response(success=False, error={'message': 'Service has active users in its queues.'}))
+            raise HTTPException(status_code=400, detail='Service has active users in its queues.')
 
         # Update service name if provided
         if request.name:
@@ -114,7 +115,7 @@ async def update_service(request: UpdateServiceRequest, db: Session = Depends(ge
                     # Remove counters (ensure they are empty before removing)
                     for i in range(current_counters, request.no_of_counters, -1):
                         if settings.counters[service.id][i] > 0:
-                            raise HTTPException(status_code=400, detail=create_response(success=False, error={'message': f'Counter {i} has active users'}))
+                            raise HTTPException(status_code=400, detail=(f'Counter {i} has active users'))
                         del settings.counters[service.id][i]  # Safely remove the empty counter
                         try:
                             to_del = (
@@ -149,46 +150,47 @@ async def update_service(request: UpdateServiceRequest, db: Session = Depends(ge
     except Exception as e:
         db.rollback()
         logging.error(f"Error updating service: {str(e)}")
-        raise HTTPException(status_code=500, detail=create_response(success=False, error={'message': str(e)}))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
 # Delete a service
-@router.delete("/service", response_model=None)
+@router.delete("/{service_id}", response_model=None)
 async def delete_service(service_id: int, db: Session = Depends(get_db)):
-    try:
-        # Find the service by ID
-        service = db.query(Services).filter(Services.id == service_id).first()
-        counters_to_del = (
-            db.query(Counters)
-            .filter(Counters.service_id==service_id)
-            .all()
-        )
+    # try:
+    # Find the service by ID
+    service = db.query(Services).filter(Services.id == service_id).first()
+    counters_to_del = (
+        db.query(Counters)
+        .filter(Counters.service_id==service_id)
+        .all()
+    )
 
-        if not service:
-            raise HTTPException(status_code=404, detail=create_response(success=False, error={'message': 'Service not found'}))
+    if not service:
+        raise HTTPException(status_code=404, detail='Service not found')
 
-        # Check if there are active users in the service queues before deletion
-        active_users = db.query(UserData).filter(UserData.service_id == service_id).count()
+    # Check if there are active users in the service queues before deletion
+    active_users = db.query(UserData).filter(UserData.service_id == service_id).count()
 
-        if active_users > 0:
-            raise HTTPException(status_code=400, detail=create_response(success=False, error={'message': 'Service has active users in its queues.'}))
+    if active_users > 0:
+        print("here in active users")
+        raise HTTPException(status_code=400, detail='Service has active users in its queues.')
+    
+    # Remove service from global queue
+    del settings.counters[service_id]
 
-        # Remove service from global queue
-        del settings.counters[service_id]
+    # Delete the service from DB
+    db.delete(service)
+    for items in counters_to_del:
+        db.delete(items)
+    db.commit()
 
-        # Delete the service from DB
-        db.delete(service)
-        for items in counters_to_del:
-            db.delete(items)
-        db.commit()
+    return create_response(data={'message': 'Service deleted successfully'})
 
-        return create_response(data={'message': 'Service deleted successfully'})
-
-    except Exception as e:
-        db.rollback()
-        logging.error(f"Error deleting service: {str(e)}")
-        raise HTTPException(status_code=400, detail=create_response(success=False, error={'message': 'Bad Request'}))
+    # except Exception as e:
+    #     db.rollback()
+    #     logging.error(f"Error deleting service: {str(e)}")
+    #     raise HTTPException(status_code=400, detail='Bad Request')
     
     
 # @router.get("/select_service", response_model=None)
