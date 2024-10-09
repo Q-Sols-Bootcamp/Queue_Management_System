@@ -1,6 +1,7 @@
 from utils.helpers import rebalance_q
 from fastapi import APIRouter, Depends, Form, HTTPException
 from sqlalchemy.orm import Session
+from schema.operator_models import *
 from database.db import get_db
 from database.models import Services, UserData, Counters
 import logging
@@ -42,42 +43,44 @@ async def select_counter(service_id: int):
     try:
         return create_response(data={"counters": settings.counters[service_id]}) 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=create_response(success=False, error={'message':f'counters for the selected service: {settings.counters}'}))            
+        raise HTTPException(status_code=500, detail=f'counters for the selected service: {settings.counters}')            
 
 @router.get("/queue")
-async def get_queue(service_id : int, counter: int, db:Session = Depends(get_db)):
-    service=  db.query(Services).filter(Services.id == service_id).first()
+async def get_queue(request: SelectQueue, db:Session = Depends(get_db)):
+    service=  db.query(Services).filter(Services.id == request.service_id).first()
     if service:    
         queue=(
             db.query(UserData)
-            .filter(UserData.service_id == service_id, UserData.counter == counter)
+            .filter(UserData.service_id == request.service_id, UserData.counter == request.counter)
             .order_by(UserData.pos)
             .all()
         )
-        print(f"Queue for service {service_id}, counter {counter}: {queue}")
+        print(f"Queue for service {request.service_id}, counter {request.counter}: {queue}")
         
         if not queue:
             return create_response(data=["queue is empty"], success=True, error=None)
-        return create_response(data=queue)
-    else:
-        raise HTTPException(status_code=500, detail=create_response(success=False, error={'message': 'Internal Error'}))              
+        else:
+            return create_response(data=queue, success=True)
 
-@router.delete("/pop_user")
-async def pop_next_user(service_id: int, counter: int, db: Session= Depends(get_db)):
+    else:
+        raise HTTPException(status_code=500, detail= 'Internal Error')
+
+@router.post("/next_user")
+async def pop_next_user(request: SelectQueue, db: Session= Depends(get_db)):
     # finding the user at position 1
-    service = db.query(Services).filter(Services.id == service_id).first()
+    service = db.query(Services).filter(Services.id == request.service_id).first()
     if service:
         users = (
             db.query(UserData)
-            .filter(UserData.service_id == service_id, UserData.counter == counter)
+            .filter(UserData.service_id == request.service_id, UserData.counter == request.counter)
             .order_by(UserData.pos)
             .all()
         )
         if not users:
-            return create_response(success=False, error={'message': 'No users found'})
+            raise HTTPException(detail='Not found', status_code=404)
         _q = (
             db.query(Counters)
-            .filter(Counters.id == counter)
+            .filter(Counters.id == request.counter)
             .first()
         )
         first_user = users[0]
@@ -96,12 +99,12 @@ async def pop_next_user(service_id: int, counter: int, db: Session= Depends(get_
                     raise HTTPException(status_code=500, detail=f"Cant process time for user {first_user} because {str(e)}")
                 db.delete(first_user)
                 db.commit()
-                settings.counters[service_id][counter] -= 1 # decrementing the number of users in the counters dictionary 
-                logging.debug(f"popped user {first_user.id}, from counter {counter}")
+                settings.counters[request.service_id][request.counter] -= 1 # decrementing the number of users in the counters dictionary 
+                logging.debug(f"popped user {first_user.id}, from counter {request.counter}")
             
                 remaining_users = (
                     db.query(UserData)
-                    .filter(UserData.service_id == service_id, UserData.counter == counter)
+                    .filter(UserData.service_id == request.service_id, UserData.counter == request.counter)
                     .order_by(UserData.ETA)
                     .all()
                 )
@@ -112,14 +115,14 @@ async def pop_next_user(service_id: int, counter: int, db: Session= Depends(get_
                 for index, user in enumerate(remaining_users, start=1):
                     user.pos = index
                 db.commit()
-                logging.debug(f"Rescheduled counter {counter}, updated Queue: {remaining_users}")
+                logging.debug(f"Rescheduled counter {request.counter}, updated Queue: {remaining_users}")
 
-                rebalance_q(service_id, db)
+                rebalance_q(request.service_id, db)
 
-                return create_response(data={'message':f'Popped User, Rescheduled and Rebalanced the counters in Sevice no.{service_id}'})
+                return create_response(data={'message':f'Popped User, Rescheduled and Rebalanced the counters in Sevice no.{request.service_id}'})
             else:
-                return create_response(success= False, data={'message':"No Users To Pop"})
+                raise HTTPException(status_code=404, detail="No user found")
     else: 
         # logging.error(f"Error while popping user {first_user.id}")
         db.rollback()
-        raise HTTPException(status_code=404, detail=create_response(success=False, error={'message':'Service not found'}))
+        raise HTTPException(status_code=404, detail='Not found')
