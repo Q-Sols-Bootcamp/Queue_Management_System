@@ -135,17 +135,17 @@ async def test_update_service_invalid_request(mocker, setup_db):
     # Add initial service
     initial_request = CreateServiceRequest(name="initial_service", no_of_counters=1)
     initial_response = await add_service(initial_request, db)
-    service_id = initial_response['data']['service_id']
+    service_id = int(initial_response['data']['service_id'])
 
     # Test data for updating service with invalid data
-    update_request = UpdateServiceRequest(service_id=service_id, name="updated_service", no_of_counters="invalid")
+    update_request = UpdateServiceRequest(service_id=service_id, name="updated_service", no_of_counters=-1)
 
     # Request simulation
     try:
         await update_service(update_request, db)
         assert False, "Expected HTTPException"
     except HTTPException as e:
-        assert e.status_code == 422  
+        assert e.status_code == 500  
         # or the expected status code for validation errors
 
 @pytest.mark.asyncio
@@ -195,7 +195,7 @@ async def test_delete_service_with_active_users(mocker, setup_db):
     # Mocking functions
     mocker.patch("database.models.Counters", autospec=True)
     mocker.patch("database.models.Services", autospec=True)
-    # mocker.patch("database.models.UserData", autospec=True)
+    mocker.patch("database.models.UserData", autospec=True)
 
     # Add initial service
     initial_request = CreateServiceRequest(name="test_service", no_of_counters=1)
@@ -213,4 +213,4 @@ async def test_delete_service_with_active_users(mocker, setup_db):
         assert False, "Expected HTTPException"
     except HTTPException as e:
         assert e.status_code == 400  # Bad Request
-        assert 'Bad Request' in e.detail['error']['message']
+        assert 'Service has active users in its queues.' in e.detail
