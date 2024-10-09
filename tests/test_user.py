@@ -7,6 +7,7 @@ from database.models import UserData, Counters
 from schema.distance_models import Location
 from utils.global_settings import settings
 from auth import *
+from schema.user_models import *
 from database.db import get_db
 from main import app
 from pydantic import BaseModel
@@ -66,19 +67,22 @@ async def test_regitser_user_success(mocker):
     # mocking functions
     mocker.patch("auth.hash_password", return_value= "hashedpassword123")
     mocker.patch("utils.helpers.get_ETA", return_value= 5)
+    # mocker.patch("schema.user_models.GenerateTokenRequest", )
 
     settings.counters = {
         1:{1:0, 2:0}
     }
 
     # test data
-    location_data = Location(latitude=27.0, longitude=69.0)
-    name = "new_user"
-    password = "password"
-    service_id = 1
+    request_data = GenerateTokenRequest(
+        name="new_user",
+        password="password",
+        service_id=1,
+        location=Location(latitude=27.0, longitude=69.0)
+    )
     
     # request simulation
-    result = await generate_token(name=name, password=password, service_id=service_id, location= location_data, db=db,)
+    result = await generate_token(request= request_data, db=db,)
 
     assert result["success"] == True
     assert "User new_user registered to counter" in result["data"]["message"]
@@ -101,6 +105,10 @@ async def test_login_user_success(mocker):
     password = "password"
     counter = 1
     pos =  1
+    request_data = UserLoginRequest(
+        name = name,
+        password = password
+    )
 
 
     # Create a test user
@@ -118,7 +126,7 @@ async def test_login_user_success(mocker):
     password = "password"
 
     # request simulation
-    response = await login_user(name=username, password=password, db=db)
+    response = await login_user(request = request_data, db=db)
     
     assert len(response) == 3  # Update the assertion to expect 3 values
     assert response["success"] == True
@@ -143,10 +151,10 @@ async def test_login_user_invalid_credentials(mocker):
     db.commit()
 
     # Create a test user
-    name = "test_user"
-    password = "password"
-    hashed_password = hash_password(password)
-    user_data = UserData(name=name, hashed_password=hashed_password, counter=1, pos=1)
+    user_name = "test_user"
+    user_password = "password"
+    hashed_password = hash_password(user_password)
+    user_data = UserData(name=user_name, hashed_password=hashed_password, counter=1, pos=1)
     db.add(user_data)
     db.commit()
 
@@ -154,12 +162,13 @@ async def test_login_user_invalid_credentials(mocker):
     mocker.patch("auth.verify_password", return_value=False)
 
     # test data
-    test_username = "test_user"
-    test_password = "wrong_password"
-
+    user_request = UserLoginRequest(
+    name = "test_user",
+    password = "wrong_password"
+    )
     # request simulation
     try:
-        await login_user(name=test_username, password=test_password, db=db)
+        await login_user(request= user_request, db=db)
     except HTTPException as e:
         assert e.status_code == 401
         assert e.detail == "Invalid credentials"
@@ -178,16 +187,19 @@ async def test_login_user_user_not_found(mocker):
     db.commit()
 
     # test data
-    test_username = "non_existent_user"
-    test_password = "password"
+    user_request = UserLoginRequest(
+        name = "non_existent_user",
+        password = "password"
+        )
 
     # check if user exists
-    user = db.query(UserData).filter(UserData.name == test_username).first()
+    user = db.query(UserData).filter(UserData.name == user_request.name).first()
     assert user is None
 
     # request simulation
     try:
-        await login_user(name=test_username, password=test_password, db=db)
+        await login_user(request=  user_request, db=db)
+
         assert False, "Expected HTTPException"
     except HTTPException as e:
         assert e.status_code == 404
