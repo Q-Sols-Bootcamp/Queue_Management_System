@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Depends
 from sqlalchemy.orm import Session
 from database.db import get_db
 from database.models import UserData#, settings
+from schema.user_models import *
 from schema.distance_models import *
 from utils.global_settings import settings
 from utils.helpers import *
@@ -30,42 +31,42 @@ def create_response(data= None, success= True, error= None):
 
 
 @router.post("/generate_token")
-async def generate_token(name: str, password: str,service_id: int, location: Location, db: Session = Depends(get_db)):
+async def generate_token(request: GenerateTokenRequest, db: Session = Depends(get_db)):
     global settings
     
-    if not name or not password:
+    if not request.name or not request.password:
         raise HTTPException(status_code=400, detail="Name and password are required")
 
     # checking to see if name is already taken since name is a unique field also acting as a user name
     existing_user=(
         db.query(UserData)
-        .filter(UserData.name == name)
+        .filter(UserData.name == request.name)
         .first()
     )
     if existing_user:
         raise HTTPException(status_code=422, detail= "Name already taken")
     
-    hashed_password = hash_password(password)
+    hashed_password = hash_password(request.password)
 
     # Increment the global UID
     settings.uid += 1
 
     # Check if the service exists and retrieve the counters for the selected service
-    if service_id not in settings.counters:
-        raise HTTPException(status_code=400, detail=f"Invalid service selected: {service_id}")
+    if request.service_id not in settings.counters:
+        raise HTTPException(status_code=400, detail=f"Invalid service selected: {request.service_id}")
 
-    service_counters = settings.counters[service_id]
-    logging.info(f"Service counters for service {service_id}: {service_counters}")
+    service_counters = settings.counters[request.service_id]
+    logging.info(f"Service counters for service {request.service_id}: {service_counters}")
 
     # Find the counter with the fewest users
     min_queue = min(service_counters.values())
     shortest_queues = [counter for counter, users in service_counters.items() if users == min_queue]
     selected_counter = shortest_queues[0]  # Select the first counter with the least number of users
 
-    logging.info(f"Selected counter for user {name}: {selected_counter}")
+    logging.info(f"Selected counter for user {request.name}: {selected_counter}")
 
     # Save the new user to the UserData table
-    new_user = UserData(name=name, hashed_password=hashed_password, counter=selected_counter, pos=0, service_id=service_id, ETA= get_ETA(location))
+    new_user = UserData(name=request.name, hashed_password=hashed_password, counter=selected_counter, pos=0, service_id=request.service_id, ETA= get_ETA(request.location))
 
     try:
         db.add(new_user)
@@ -76,7 +77,7 @@ async def generate_token(name: str, password: str,service_id: int, location: Loc
         # Fetch all users in the selected counter, sorted by ETA
         users_in_counter = (
             db.query(UserData)
-            .filter(UserData.service_id == service_id, UserData.counter == selected_counter)
+            .filter(UserData.service_id == request.service_id, UserData.counter == selected_counter)
             .order_by(UserData.ETA)
             .all()
         )
@@ -106,7 +107,7 @@ async def generate_token(name: str, password: str,service_id: int, location: Loc
         
 
         # Update the counters dictionary to reflect the newly added user
-        settings.counters[service_id][selected_counter] += 1
+        settings.counters[request.service_id][selected_counter] += 1
         processing_counter= (
                 db.query(Counters)
                 .filter(Counters.id == selected_counter)
@@ -124,17 +125,17 @@ async def generate_token(name: str, password: str,service_id: int, location: Loc
 
     except Exception as e:
         db.rollback()  # Rollback if there are any errors
-        logging.error(f"Failed to register user {name}: {str(e)}")
+        logging.error(f"Failed to register user {request.name}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to register user: {new_user.name} because {str(e)}" )
 
     # Return a success message
-    return create_response(data={'message': f"User {name} registered to counter {selected_counter} at position {new_user.pos}"})
+    return create_response(data={'message': f"User {request.name} registered to counter {selected_counter} at position {new_user.pos}"})
 
 @router.post("/login")
-async def login_user(name:str, password: str, db: Session = Depends(get_db)):
+async def login_user(request: UserLoginRequest, db: Session = Depends(get_db)):
     user= (
         db.query(UserData)
-        .filter(UserData.name == name)
+        .filter(UserData.name == request.name)
         .first()
     )
     if not user:
@@ -142,11 +143,11 @@ async def login_user(name:str, password: str, db: Session = Depends(get_db)):
 
     user = (
         db.query(UserData)
-        .filter(UserData.name == name)
+        .filter(UserData.name == request.name)
         .first()
     )
 
-    if not user or not verify_password(password, user.hashed_password):
+    if not user or not verify_password(request.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     access_token = create_access_token(data= {"subject": user.name})
