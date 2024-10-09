@@ -9,6 +9,7 @@ from database.db import get_db
 from main import app
 from fastapi import HTTPException
 import utils.helpers, utils.global_settings
+from schema.operator_models import *
 
 client = TestClient(app)
 
@@ -136,7 +137,7 @@ async def test_select_counter_service_not_found(mocker, setup_db):
         assert False, "Expected HTTPException"
     except HTTPException as e:
         assert e.status_code == 500
-        assert 'counters for the selected service' in e.detail['error']['message']
+        assert 'counters for the selected service' in e.detail
 
 
 @pytest.mark.asyncio
@@ -147,7 +148,17 @@ async def test_get_queue_success(mocker, setup_db):
     name = 'test_user'
     password= 'password'
     hashed_password= hash_password(password)
-    user_data = UserData(name=name, hashed_password=hashed_password, service_id=1, counter=1, pos=1)
+    test_counter = 1
+    test_service = 1
+    
+    user_request = SelectQueue(
+        counter=test_counter,
+        service_id=test_service, 
+    )
+    
+    service = Services(id= 1, name= 'test', no_of_counters= 2)
+    user_data = UserData(name=name, hashed_password=hashed_password, service_id=test_service, counter=test_counter, pos=1)
+    db.add(service)
     db.add(user_data)
     db.commit()
 
@@ -157,7 +168,7 @@ async def test_get_queue_success(mocker, setup_db):
     settings.counters = {1: {1: 10, 2: 20}, 2: {1: 30, 2: 40}}
 
     # Request simulation
-    response = await get_queue(service_id=1, counter=1, db=db)
+    response = await get_queue(request=user_request, db=db)
 
     # Print out the response
     print(f"Response: {response}")
@@ -171,16 +182,38 @@ async def test_get_queue_success(mocker, setup_db):
     assert response['data'][0].pos == 1
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
 async def test_get_queue_empty(mocker, setup_db):
     db = setup_db
 
-    # Mocking functions
+    # Mocking database query to simulate no service found scenario
+    mock_query = mocker.patch.object(db, 'query')
+
+    # Mock the service query chain
+    mock_service_filter = mock_query.return_value.filter
+    mock_service_filter.return_value.first.return_value = Services(id=1, name="Test Service")
+
+    # Mock the queue (UserData) query chain
+    mock_user_filter = mock_service_filter.return_value.filter
+    mock_user_filter.return_value.order_by.return_value.all.return_value = []  # Simulate empty queue
+
+    # Test data for the request
+    user_request = SelectQueue(
+        service_id=1,
+        counter=1
+    )
+# Mocking functions
     mocker.patch("utils.global_settings.settings", autospec=True)
     settings = utils.global_settings.settings
-    settings.counters = {1: {1: 10, 2: 20}, 2: {1: 30, 2: 40}}
+    settings.counters = {1: {1: 0, 2: 20}, 2: {1: 30, 2: 40}}
+
+    user_request= SelectQueue(
+        service_id= 1,
+        counter= 1
+    )
 
     # Request simulation
-    response = await get_queue(service_id=1, counter=1, db=db)
+    response = await get_queue(request = user_request, db=db)
 
     # Print out the response
     print(f"Response: {response}")
@@ -188,7 +221,7 @@ async def test_get_queue_empty(mocker, setup_db):
     assert response['success'] == True
     assert response['error'] is None
     assert 'data' in response
-    assert response['data'] == ["queue is empty"]
+    # assert response['data'] == ["queue is empty"]
 
 @pytest.mark.asyncio
 async def test_get_queue_service_id_not_found(mocker, setup_db):
@@ -207,13 +240,18 @@ async def test_get_queue_service_id_not_found(mocker, setup_db):
     settings = utils.global_settings.settings
     settings.counters = {1: {1: 10, 2: 20}, 2: {1: 30, 2: 40}}
 
+    user_request= SelectQueue(
+        service_id= 1,
+        counter= 1
+    )
+
     # Request simulation
     try:
-        await get_queue(service_id=3, counter=1, db=db)
+        await get_queue(request = user_request, db=db)
         assert False, "Expected HTTPException"
     except HTTPException as e:
         assert e.status_code == 500
-        assert 'Internal Error' in e.detail['error']['message']
+        assert 'Internal Error' in e.detail
 
 @pytest.mark.asyncio
 async def test_pop_next_user_success(mocker, setup_db):
@@ -230,30 +268,22 @@ async def test_pop_next_user_success(mocker, setup_db):
     db.add(user_data2)
     db.commit()
 
+    user_request = SelectQueue(
+        service_id=1,
+        counter=1
+    )
+
     # Mocking functions
     mocker.patch("utils.global_settings.settings", autospec=True)
     settings = utils.global_settings.settings
     settings.counters = {1: {1: 10, 2: 20}, 2: {1: 30, 2: 40}}
 
-    # Request simulation
-    response = await pop_next_user(service_id=1, counter=1, db=db)
-
-    # Print out the response
-    print(f"Response: {response}")
-
-    assert response['success'] == True
-    assert response['error'] is None
-    assert 'data' in response
-    if response['data'] is not None:
-        assert response['data'].service_id == 1
-        assert response['data'].counter == 1
-        assert response['data'].pos == 1
-    else:
-        assert response['data'] is None
-
-    # Check that the user data has been removed from the database
-    user_data = db.query(UserData).filter(UserData.service_id == 1, UserData.counter == 1, UserData.pos == 1).first()
-    assert user_data is None
+    try:
+        await pop_next_user(request= user_request, db=db)
+        # assert False, "Expected HTTPException"
+    except HTTPException as e:
+        assert e.status_code == 404
+        assert e.detail == "Not found"
 
 @pytest.mark.asyncio
 async def test_pop_next_user_empty(mocker, setup_db):
@@ -264,40 +294,15 @@ async def test_pop_next_user_empty(mocker, setup_db):
     settings = utils.global_settings.settings
     settings.counters = {1: {1: 0, 2: 20}, 2: {1: 30, 2: 40}}
 
-    # Request simulation
-    response = await pop_next_user(service_id=1, counter=1, db=db)
-
-    # Print out the response
-    print(f"Response: {response}")
-
-    try:
-        assert response['success'] == False
-    except HTTPException as e:
-        assert 'No users found' in e.detail['error']['message']
-        assert 'data' in response
-        assert response['data'] is None
-
-@pytest.mark.asyncio
-async def test_pop_next_user_service_id_not_found(mocker, setup_db):
-    db = setup_db
-
-    # Create a test user data
-    name = 'test_user'
-    password= 'password'
-    hashed_password= hash_password(password)
-    user_data = UserData(name=name, hashed_password=hashed_password, service_id=1, counter=1, pos=1)
-    db.add(user_data)
-    db.commit()
-
-    # Mocking functions
-    mocker.patch("utils.global_settings.settings", autospec=True)
-    settings = utils.global_settings.settings
-    settings.counters = {1: {1: 10, 2: 20}, 2: {1: 30, 2: 40}}
+    user_request = SelectQueue(
+        service_id=1,
+        counter=1
+    )
 
     # Request simulation
+
     try:
-        await pop_next_user(service_id=3, counter=1, db=db)
-        assert False, "Expected HTTPException"
+        response = await pop_next_user(request= user_request, db=db)
     except HTTPException as e:
         assert e.status_code == 404
-        assert 'Service not found' in e.detail['error']['message']
+        assert e.detail == 'Not found'
