@@ -2,12 +2,16 @@ from datetime import datetime, timedelta
 from jose import jwt, JWTError
 from fastapi import HTTPException
 from passlib.context import CryptContext
+import os
+from dotenv import load_dotenv
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated= "auto")
+load_dotenv()
 
-SECRET_KEY = "ABC"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+pwd_context = CryptContext(schemes=[os.getenv("PASSWORD_SCHEME")], deprecated="auto")
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = os.getenv("ALGORITHM")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
 
 def create_access_token(data: dict):
     to_encode = data.copy()

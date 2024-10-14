@@ -45,17 +45,21 @@ async def add_service(request: CreateServiceRequest, db: Session = Depends(get_d
 
         # Initialize counters for the new service
         service_counters = {}
+        new_counters = []
 
         # Use global_counter to assign unique counter numbers across all services
         for _ in range(request.no_of_counters):
-            service_counters[settings.global_counter] = 0  # No users in the counter at start
-            logging.info(f"Assigned counter {settings.global_counter} to service {new_service.name}")
-            new_counter = Counters(id=settings.global_counter, service_id = _serviceid)
-            db.add(new_counter)
-            db.commit()
-            db.refresh(new_counter)
+            new_counter = Counters(service_id= new_service.id)
+            new_counters.append(new_counter)
+            service_counters[new_service.id] = 0
+            logging.info(f"Assigned counter {new_counter.id} to service {new_service.name}")
+        db.add_all(new_counters)
+        db.commit()
+
+        for counter in new_counters:
+            settings.counters[new_service.id][counter.id] = 0
         
-            settings.global_counter += 1  # Increment global counter for the next assignment
+        settings.global_counter += len(new_counters)
 
         # Add this service's counters to the global counters dictionary using the service ID
         settings.counters[new_service.id] = service_counters
