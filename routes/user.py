@@ -77,6 +77,9 @@ async def generate_token(request: GenerateTokenRequest, db: Session = Depends(ge
         db.add(new_user)
         db.commit()  # Commit to generate a valid user ID
         db.refresh(new_user)  # Refresh the user to fetch the latest state
+        # Update the counters dictionary to reflect the newly added user
+        settings.counters[request.service_id][selected_counter] += 1
+        logging.debug(f"Adding the new user {request.name} we have: {settings.counters}")
 
         # Update queue position based on ETA
         # Fetch all users in the selected counter, sorted by ETA
@@ -112,14 +115,15 @@ async def generate_token(request: GenerateTokenRequest, db: Session = Depends(ge
                 raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
         
 
-        # Update the counters dictionary to reflect the newly added user
-        settings.counters[request.service_id][selected_counter] += 1
+        
         processing_counter= (
                 db.query(Counter)
                 .filter(Counter.id == selected_counter)
                 .first()
             )
         processing_counter.in_queue +=1
+        logging.info(f"Adding the new user  {request.name} we have: {processing_counter.in_queue} in queue")
+
         try:
             # db.add()
             db.commit()
@@ -135,7 +139,7 @@ async def generate_token(request: GenerateTokenRequest, db: Session = Depends(ge
         raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
 
     # Return a success message
-    return (StatusCode.CREATED.value, StatusCode.CREATED.message)
+    return StatusResponse(status_code=StatusCode.CREATED.value, status_message=StatusCode.CREATED.message)
 
 @router.post("/login", response_model=StatusResponse)
 async def login_user(request: UserLoginRequest, db: Session = Depends(get_db)):

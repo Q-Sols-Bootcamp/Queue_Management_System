@@ -10,3 +10,10 @@ class GenerateTokenRequest(BaseModel):
 class UserLoginRequest(BaseModel):
     name: str
     password: str
+
+class UserResponse(BaseModel):
+    id: int
+    name: str
+    counter:int
+    pos: int
+    eta: int

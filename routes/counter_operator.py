@@ -18,7 +18,7 @@ router = APIRouter(
     tags= ["operator"]
 )
 
-@router.get("/service", response_model=StatusResponse)
+@router.get("/service")
 async def get_services(db:Session = Depends(get_db)):
     """
     Retrieve a list of all services.
@@ -40,10 +40,10 @@ async def get_services(db:Session = Depends(get_db)):
     except Exception as e:
         logging.debug(f"get_services failed because {str(e)}")
         raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
-    return StatusResponse(StatusCode.OK.value, StatusCode.OK.message, services)
+    return (services)
 
-@router.get("/counters/{service_id}", response_model=StatusResponse)
-async def get_counter(service_id: int):
+@router.get("/counters/{service_id}")
+async def get_counter(service_id: int, db:Session=Depends(get_db)):
     """
     Retrieve the counter information for a service.
 
@@ -61,8 +61,9 @@ async def get_counter(service_id: int):
             - If there's an error during the retrieval process (500).
     """
     try:
-        return StatusResponse(StatusCode.OK.value,StatusCode.OK.message, {"counters": settings.counters[service_id]}
-        )
+        counters = db.query(Counter.id, Counter.in_queue).filter(Service.id == service_id).all()
+        # return {"counters": settings.counters[service_id]}
+        return {"counters": counters}
     except Exception as e:
         logging.debug(f"get_counter failed: {str(e)}")
         raise HTTPException(status_code=StatusCode.BAD_REQUEST.value, detail=StatusCode.BAD_REQUEST.message)
