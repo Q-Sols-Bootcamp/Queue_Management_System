@@ -1,16 +1,11 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 from sqlalchemy import text
 from routes.services_crud import add_service, update_service, delete_service
-from database.models import Services, Counters
 from schema.services_models import CreateServiceRequest, UpdateServiceRequest
-from auth import *
+from fastapi import HTTPException
 from database.db import get_db
 from main import app
-from pydantic import BaseModel
-from datetime import timedelta, datetime
-from pydantic import ValidationError
 
 client = TestClient(app)
 
@@ -49,8 +44,8 @@ async def test_add_service_success(mocker, setup_db):
     db = setup_db
 
     # Mocking functions
-    mocker.patch("database.models.Counters", autospec=True)
-    mocker.patch("database.models.Services", autospec=True)
+    mocker.patch("database.models.Counter", autospec=True)
+    mocker.patch("database.models.Service", autospec=True)
 
     # Test data
     request = CreateServiceRequest(name="test_service", no_of_counters=1)
@@ -68,8 +63,8 @@ async def test_add_service_invalid_request(mocker, setup_db):
     db = setup_db
     
     # Mocking functions
-    mocker.patch("database.models.Counters", autospec=True)
-    mocker.patch("database.models.Services", autospec=True)
+    mocker.patch("database.models.Counter", autospec=True)
+    mocker.patch("database.models.Service", autospec=True)
 
     
     # Test data
@@ -87,8 +82,8 @@ async def test_update_service_success(mocker, setup_db):
     db = setup_db
 
     # Mocking functions
-    mocker.patch("database.models.Counters", autospec=True)
-    mocker.patch("database.models.Services", autospec=True)
+    mocker.patch("database.models.Counter", autospec=True)
+    mocker.patch("database.models.Service", autospec=True)
 
     # Add initial service
     initial_request = CreateServiceRequest(name="initial_service", no_of_counters=1)
@@ -111,8 +106,8 @@ async def test_update_service_not_found(mocker, setup_db):
     db = setup_db
 
     # Mocking functions
-    mocker.patch("database.models.Counters", autospec=True)
-    mocker.patch("database.models.Services", autospec=True)
+    mocker.patch("database.models.Counter", autospec=True)
+    mocker.patch("database.models.Service", autospec=True)
 
     # Test data for updating a non-existent service
     update_request = UpdateServiceRequest(service_id=999, name="non_existent_service", no_of_counters=2)
@@ -129,8 +124,8 @@ async def test_update_service_invalid_request(mocker, setup_db):
     db = setup_db
 
     # Mocking functions
-    mocker.patch("database.models.Counters", autospec=True)
-    mocker.patch("database.models.Services", autospec=True)
+    mocker.patch("database.models.Counter", autospec=True)
+    mocker.patch("database.models.Service", autospec=True)
 
     # Add initial service
     initial_request = CreateServiceRequest(name="initial_service", no_of_counters=1)
@@ -153,8 +148,8 @@ async def test_delete_service_success(mocker, setup_db):
     db = setup_db
 
     # Mocking functions
-    mocker.patch("database.models.Counters", autospec=True)
-    mocker.patch("database.models.Services", autospec=True)
+    mocker.patch("database.models.Counter", autospec=True)
+    mocker.patch("database.models.Service", autospec=True)
 
     # Add initial service
     initial_request = CreateServiceRequest(name="test_service", no_of_counters=1)
@@ -174,8 +169,8 @@ async def test_delete_service_not_found(mocker, setup_db):
     db = setup_db
 
     # Mocking functions
-    mocker.patch("database.models.Counters", autospec=True)
-    mocker.patch("database.models.Services", autospec=True)
+    mocker.patch("database.models.Counter", autospec=True)
+    mocker.patch("database.models.Service", autospec=True)
 
     # Test data for deleting a non-existent service
     non_existent_service_id = 999
@@ -193,8 +188,8 @@ async def test_delete_service_with_active_users(mocker, setup_db):
     db = setup_db
 
     # Mocking functions
-    mocker.patch("database.models.Counters", autospec=True)
-    mocker.patch("database.models.Services", autospec=True)
+    mocker.patch("database.models.Counter", autospec=True)
+    mocker.patch("database.models.Service", autospec=True)
     mocker.patch("database.models.UserData", autospec=True)
 
     # Add initial service

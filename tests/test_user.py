@@ -3,15 +3,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from routes.user import generate_token, login_user
-from database.models import UserData, Counters
+from database.models import UserData#, Counter
 from schema.distance_models import Location
 from utils.global_settings import settings
-from auth import *
-from schema.user_models import *
+from auth import SECRET_KEY, ALGORITHM, hash_password
+from fastapi import HTTPException
+from schema.user_models import GenerateTokenRequest, UserLoginRequest
 from database.db import get_db
 from main import app
 from pydantic import BaseModel
 from datetime import timedelta, datetime
+from jose import jwt
 
 _off = text("SET FOREIGN_KEY_CHECKS = 0;")
 _on = text("SET FOREIGN_KEY_CHECKS = 1;")

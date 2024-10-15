@@ -11,10 +11,10 @@ class UserData(Base):
             id (int): Primary key.
             name (str): Unique username.
             hashed_password (str): Hashed user password.
-            counter (int): Foreign key to Counters.
+            counter (int): Foreign key to Counter.
             pos (int): Position in the queue.
             ETA (int): Estimated Time of Arrival.
-            service_id (int): Foreign key to Services.
+            service_id (int): Foreign key to Service.
    """
 
 
@@ -26,13 +26,13 @@ class UserData(Base):
     pos = Column(Integer, default=None, nullable= False)
     ETA = Column(Integer, default= 0)
     service_id = Column(Integer, ForeignKey('services.id'), nullable=False, index= True)
-    # processing_time= Column(Integer, nullable=True)
+    processing_time= Column(Integer, nullable=True, default=0)
     # Correct relationship to the Service model
-    service = relationship("Services", back_populates="users")  # Single service, not services
-    counter_rel = relationship("Counters", back_populates="users")
+    service = relationship("Service", back_populates="users")  # Single service, not services
+    counter_rel = relationship("Counter", back_populates="users")
 
 
-class Services(Base):
+class Service(Base):
 
     """
         Represents a service in the queue management system.
@@ -49,14 +49,14 @@ class Services(Base):
 
     # Correct corresponding relationship to the UserData model
     users = relationship("UserData", back_populates="service")  # Use 'service' here to match UserData
-    counter_rel = relationship("Counters", back_populates= "service")
+    counter_rel = relationship("Counter", back_populates= "service")
     
-class Counters(Base):
+class Counter(Base):
     """
     Represents a counter in the queue management system.
     Attributes:
         id (int): Primary key.
-        service_id(int): Foreign key to Services.
+        service_id(int): Foreign key to Service.
         avg_tat(int): Average Processing(Turn-Around-Time) time of the counter.
         total_tat(int): Total Processing(Turn-Around-Time) of the counter.
         users_processed(int): Number of users processed by the counter.
@@ -65,14 +65,14 @@ class Counters(Base):
     
     
     __tablename__ = "counters"
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, index=True)
     service_id = Column(Integer, ForeignKey('services.id'), index= True)
     avg_tat = Column(Integer, default= 0)
     total_tat = Column(Integer, default= 0)
     users_processed = Column(Integer, default= 0)
     in_queue = Column(Integer, default= 0)
 
-    service = relationship("Services", back_populates="counter_rel")
+    service = relationship("Service", back_populates="counter_rel")
     users = relationship("UserData", back_populates="counter_rel")
     
     

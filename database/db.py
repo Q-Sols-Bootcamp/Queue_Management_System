@@ -3,7 +3,7 @@ from sqlalchemy.orm import sessionmaker,declarative_base
 # import pymysql
 # pymysql.install_as_MySQLdb()
 
-DATABASE_URL = "mysql+mysqlconnector://sqluser:password@localhost/mock_queue_db"
+DATABASE_URL = "mysql+mysqlconnector://sqluser:password@localhost/alishandb"
 
 #creating new engine instance to interact with the database and session object
 engine = create_engine(DATABASE_URL, echo=True)
