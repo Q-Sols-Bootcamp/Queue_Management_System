@@ -1,7 +1,7 @@
 from utils.helpers import rebalance_q
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from schema.operator_models import SelectQueue
+from schema.operator_models import SelectQueue, UserDataResponse
 from database.db import get_db
 from database.models import Service, UserData, Counter
 import time, logging
@@ -9,7 +9,7 @@ from status import StatusCode, StatusResponse
 from utils.global_settings import settings, setup_logging
 
 setup_logging()
-logging = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 # logging.debug("This is a debug message from my module.")
 
@@ -61,15 +61,15 @@ async def get_counter(service_id: int, db:Session=Depends(get_db)):
             - If there's an error during the retrieval process (500).
     """
     try:
-        counters = db.query(Counter.id, Counter.in_queue).filter(Service.id == service_id).all()
+        counters = db.query(Counter).filter(Service.id == service_id).all()
         # return {"counters": settings.counters[service_id]}
         return {"counters": counters}
     except Exception as e:
         logging.debug(f"get_counter failed: {str(e)}")
         raise HTTPException(status_code=StatusCode.BAD_REQUEST.value, detail=StatusCode.BAD_REQUEST.message)
 
-@router.get("/queue", response_model=StatusResponse)
-async def get_queue(request: SelectQueue, db:Session = Depends(get_db)):
+@router.get("/queue/{counter_id}")
+async def get_queue(counter_id:int, db:Session = Depends(get_db)):
     """
     Retrieve the queue information for a specific service and counter.
 
@@ -80,29 +80,22 @@ async def get_queue(request: SelectQueue, db:Session = Depends(get_db)):
         db (Session, optional): A database session. Defaults to Depends(get_db).
 
     Returns:
-        StatusResponse: A response object containing the queue information.
+        A response object containing the queue information.
 
     Raises:
         HTTPException:
-            - If the service ID is invalid or not found (400).
+            - If the service ID is not found (404).
             - If there's an error during the retrieval process (500).
     """
-    service=  db.query(Service).filter(Service.id == request.service_id).first()
-    if service:    
-        queue=(
-            db.query(UserData)
-            .filter(UserData.service_id == request.service_id, UserData.counter == request.counter)
-            .order_by(UserData.pos)
-            .all()
-        )
-        logging.info(f"Queue for service {request.service_id}, counter {request.counter}: {queue}")
-        
-        if not queue:
-            return StatusResponse(StatusCode.OK.value, StatusCode.OK.message, queue)
-        else:
-            return StatusResponse(StatusCode.OK.value, StatusCode.OK.message, queue)
+    check_service= db.query(Counter.service_id).filter(Counter.id==counter_id).first()
+    if check_service is None:
+        raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)
 
-    else:
+    try:
+        queue= db.query(UserData).filter(UserData.counter==counter_id).all()
+        return (queue)
+    except Exception as e:
+        logging.debug(f"Failed get_queue(): {str(e)}")
         raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
 
 @router.post("/queue/next")
@@ -181,7 +174,7 @@ async def pop_next_user_from_queue(request: SelectQueue, db: Session= Depends(ge
 
                 rebalance_q(request.service_id, db)
 
-                return StatusResponse(StatusCode.OK.value,StatusCode.OK.message)
+                return StatusResponse(status_code=StatusCode.OK.value,status_message=StatusCode.OK.message)
             else:
                 raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)
     else: 

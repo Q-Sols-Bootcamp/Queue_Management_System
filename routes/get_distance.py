@@ -5,7 +5,7 @@ from database.db import get_db
 from database.models import UserData, Counter
 import os, re, httpx, logging
 from dotenv import load_dotenv
-from schema.distance_models import UpdateEtaReaquest
+from schema.distance_models import UpdateEtaReaquest, UpdateUserResponse
 from utils.helpers import is_here
 from utils.global_settings import setup_logging
 from status import StatusCode, StatusResponse
@@ -14,7 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 load_dotenv()
 
 setup_logging()
-logging = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/distance",
@@ -26,7 +26,7 @@ router = APIRouter(
 DISTANCEMATRIX_API_KEY = os.getenv('DISTANCEMATRIX_API_KEY')
 Q_SOLUTIONS_COORDS = (24.85265469425946, 67.00765930367423)
 
-@router.put("")
+@router.put("",response_model= StatusResponse)
 async def update_eta(request: UpdateEtaReaquest, db: Session = Depends(get_db)):
     """
     Update the ETA (Estimated Time of Arrival) for a user.
@@ -46,7 +46,7 @@ async def update_eta(request: UpdateEtaReaquest, db: Session = Depends(get_db)):
             - If there's an error during the ETA calculation or update process (500).
     """
     try:
-        response = await httpx.get(
+        response = httpx.get(
             f"https://api.distancematrix.ai/maps/api/distancematrix/json",
             params={
                 "origins": f"{request.location.latitude},{request.location.longitude}",
@@ -54,60 +54,62 @@ async def update_eta(request: UpdateEtaReaquest, db: Session = Depends(get_db)):
                 "key": DISTANCEMATRIX_API_KEY
             }
         )
+    except Exception as e:
+        logging.debug(f"update_eta failed: {str(e)}")
+        raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
+    data = response.json()
 
-        data = response.json()
+    if "rows" in data and data["rows"]:
+        # distance = data["rows"][0]["elements"][0]["distance"]["text"]
+        duration_str = data["rows"][0]["elements"][0]["duration"]["text"]
+        
+        # Extract the integer value from the duration string (e.g., "15 mins" -> 15)
+        duration_match = re.search(r'(?:(\d+)\s*hour[s]?)?\s*(?:(\d+)\s*min[s]?)?', duration_str)
+        if duration_match:
+            hours = int(duration_match.group(1)) if duration_match.group(1) else 0
+            minutes = int(duration_match.group(2)) if duration_match.group(2) else 0
 
-        if "rows" in data and data["rows"]:
-            # distance = data["rows"][0]["elements"][0]["distance"]["text"]
-            duration_str = data["rows"][0]["elements"][0]["duration"]["text"]
-            
-            # Extract the integer value from the duration string (e.g., "15 mins" -> 15)
-            duration_match = re.search(r'(?:(\d+)\s*hour[s]?)?\s*(?:(\d+)\s*min[s]?)?', duration_str)
-            if duration_match:
-                hours = int(duration_match.group(1)) if duration_match.group(1) else 0
-                minutes = int(duration_match.group(2)) if duration_match.group(2) else 0
-
-                duration_in_minutes = (hours*60) + minutes
-                logging.debug(f"user {request.userid} has an updated ETA of {duration_in_minutes}")
-                # return duration_in_minutes
-            else:
-                raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
-        # logging.debug(f"---------------------------------out of loop here")
-
-        user_to_update = (
-            db.query(UserData)
-            .filter(UserData.id == request.userid)
-            .first()
-            )
-        # logging.debug(f"user to update = {user_to_update}")
-
-        if user_to_update:
-            logging.debug(f"old ETA for user {request.userid} = {user_to_update.ETA}")
-            user_to_update.ETA = duration_in_minutes
-            logging.debug(f"new ETA for user {request.userid} = {user_to_update.ETA}")
-
+            duration_in_minutes = (hours*60) + minutes
+            logging.debug(f"user {request.userid} has an updated ETA of {duration_in_minutes}")
+            # return duration_in_minutes
         else:
-            raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)
+            raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
+    # logging.debug(f"---------------------------------out of loop here")
 
-        db.commit()
-        db.refresh(user_to_update)
-        logging.debug(f"user_to_update.counter = {user_to_update.counter}")
-        
-        users_in_counter = (
-            db.query(UserData)
-            .filter(UserData.counter == user_to_update.counter)
-            .order_by(UserData.ETA)
-            .all()
+    user_to_update = (
+        db.query(UserData)
+        .filter(UserData.id == request.userid)
+        .first()
         )
+    # logging.debug(f"user to update = {user_to_update}")
 
-        for new_pos, user in enumerate(users_in_counter, start=1):
-            user.pos = new_pos
-        
+    if user_to_update:
+        logging.debug(f"old ETA for user {request.userid} = {user_to_update.ETA}")
+        user_to_update.ETA = duration_in_minutes
+        logging.debug(f"new ETA for user {request.userid} = {user_to_update.ETA}")
+
+    else:
+        raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)
+
+    db.commit()
+    db.refresh(user_to_update)
+    logging.debug(f"user_to_update.counter = {user_to_update.counter}")
+    
+    users_in_counter = (
+        db.query(UserData)
+        .filter(UserData.counter == user_to_update.counter)
+        .order_by(UserData.ETA)
+        .all()
+    )
+    updated_user = UpdateUserResponse(userid=user_to_update.id, updated_eta=user_to_update.ETA)
+    for new_pos, user in enumerate(users_in_counter, start=1):
+        user.pos = new_pos
+    try:
         db.commit()
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=StatusCode.BAD_REQUEST.value, detail=StatusCode.BAD_REQUEST.message)
-    
+
     get_counter= (
         db.query(UserData.counter)
         .filter(UserData.id == request.userid)
@@ -129,4 +131,5 @@ async def update_eta(request: UpdateEtaReaquest, db: Session = Depends(get_db)):
             db.rollback()
             logging.debug(f"Can not start processing time for counter no{counter_id} because {str(e)}")
             raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.message, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
-    return StatusResponse(StatusCode.OK.value, StatusCode.OK.message)
+        
+    return StatusResponse(status_code=StatusCode.OK.value,status_message= StatusCode.OK.message, data=updated_user)

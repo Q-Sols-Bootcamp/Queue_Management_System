@@ -7,3 +7,7 @@ class Location(BaseModel):
 class UpdateEtaReaquest(BaseModel):
     userid: int
     location: Location 
+
+class UpdateUserResponse(BaseModel):
+    userid: int
+    update_eta: int

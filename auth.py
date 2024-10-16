@@ -4,13 +4,14 @@ from fastapi import HTTPException
 from passlib.context import CryptContext
 from dotenv import load_dotenv
 from status import StatusCode
+import os
 
 load_dotenv()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-SECRET_KEY = "ABC"
-ALGORITHM = "HS256"
+SECRET_KEY = os.getenv('SECRET_KEY')
+ALGORITHM = os.getenv('ALGORITHM')
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 

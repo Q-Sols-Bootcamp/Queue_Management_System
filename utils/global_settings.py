@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     counters:dict = {}
     uid: int = 0
 
-    # is_empty: bool = True
+    is_empty: bool = True
     global_counter: int = 1
 
     

@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from database.models import UserData, Counter#, Service
 import time
+from status import StatusCode
 from utils.global_settings import (
     settings,
     DISTANCEMATRIX_API_KEY,
@@ -138,8 +139,8 @@ async def is_here(counter_id:int, db: Session):
 
     Raises:
         HTTPException:
-            - If the counter is empty (500).
-            - If the counter ID is invalid (500).
+            - If the counter is empty (404).
+            - If the counter ID is invalid (400).
     """
     if Counter.id == counter_id:
         first_user= (
@@ -159,9 +160,9 @@ async def is_here(counter_id:int, db: Session):
             else:
                 return False
         else:
-            raise HTTPException(status_code=500, detail=f"Counter no.{counter_id} is  empty")        
+            raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)
     else:
-        raise HTTPException(status_code=500, detail=f"Counter no.{counter_id} is invalid")        
+        raise HTTPException(status_code=StatusCode.BAD_REQUEST.value, detail=StatusCode.BAD_REQUEST.message)
 
 async def rebalance_q(service_id:int, db:Session):
     """

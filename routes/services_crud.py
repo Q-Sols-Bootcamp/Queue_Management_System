@@ -9,7 +9,7 @@ from status import StatusCode, StatusResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 setup_logging()
-logging = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(
@@ -85,6 +85,7 @@ async def add_service(request: CreateServiceRequest, db: Session = Depends(get_d
     else:
         db.rollback()
         raise HTTPException(status_code=StatusCode.CONFLICT.value, detail=StatusCode.CONFLICT.message)
+
 
 
 
@@ -183,7 +184,7 @@ async def update_service(request: UpdateServiceRequest, db: Session = Depends(ge
         return StatusResponse(status_code=StatusCode.OK.value,status_message=StatusCode.OK.message, data=service_to_return)
     except Exception as e:
         db.rollback()
-        logging.error(f"Error updating service: {str(e)}")
+        logging.error(f"Error updating service because: {str(e)}")
         raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
 
 
@@ -201,17 +202,19 @@ async def delete_service(service_id: int, db: Session = Depends(get_db)):
         db (Session, optional): A database session. Defaults to Depends(get_db).
 
     Returns:
-        StatusResponse: A response object indicating the status of the service deletion.
+        StatusResponse: A response object indicating the status of the service deletion
+        and the info of the deleted service.
 
     Raises:
         HTTPException:
             - If the service is not found (404).
             - If there are active users in the service queues (400).
-            - If there's an error during the deletion process (400).
+            - If there's an error during the deletion process (500).
     """
+    service = db.query(Service).filter(Service.id == service_id).first()
+    to_return = ServiceResponse(id=service.id, name= service.name, no_of_counters=service.no_of_counters)
     try:
     # Find the service by ID
-        service = db.query(Service).filter(Service.id == service_id).first()
         counters_to_del = (
             db.query(Counter)
             .filter(Counter.service_id==service_id)
@@ -236,10 +239,9 @@ async def delete_service(service_id: int, db: Session = Depends(get_db)):
         for items in counters_to_del:
             db.delete(items)
         db.commit()
-
-        return StatusResponse(StatusCode.OK.value, StatusCode.OK.message)
+        return StatusResponse(status_code=StatusCode.OK.value,status_message= StatusCode.OK.message, data=to_return)
 
     except Exception as e:
         db.rollback()
         logging.error(f"Error deleting service: {str(e)}")
-        raise HTTPException(status_code=StatusCode.BAD_REQUEST.value, detail=StatusCode.BAD_REQUEST.message)
+        raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)

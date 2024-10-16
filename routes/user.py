@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Depends
 from sqlalchemy.orm import Session
 from database.db import get_db
 from database.models import UserData, Counter
-from schema.user_models import GenerateTokenRequest, UserLoginRequest
+from schema.user_models import GenerateTokenRequest, UserLoginRequest, UserResponse
 from utils.global_settings import settings
 from utils.helpers import get_ETA, is_here
 import time, logging
@@ -11,7 +11,7 @@ from status import StatusCode, StatusResponse
 from utils.global_settings import settings, setup_logging
 
 setup_logging()
-logging = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(
@@ -137,9 +137,9 @@ async def generate_token(request: GenerateTokenRequest, db: Session = Depends(ge
         db.rollback()  # Rollback if there are any errors
         logging.error(f"Failed to register user {request.name}: {str(e)}")
         raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
-
+    user_to_return= UserResponse(id=new_user.id, name=new_user.name, counter= new_user.counter, pos=new_user.pos, eta=new_user.ETA)
     # Return a success message
-    return StatusResponse(status_code=StatusCode.CREATED.value, status_message=StatusCode.CREATED.message)
+    return StatusResponse(status_code=StatusCode.CREATED.value, status_message=StatusCode.CREATED.message, data=user_to_return)
 
 @router.post("/login", response_model=StatusResponse)
 async def login_user(request: UserLoginRequest, db: Session = Depends(get_db)):
