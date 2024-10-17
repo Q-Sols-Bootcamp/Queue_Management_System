@@ -1,74 +1,125 @@
 from utils.helpers import rebalance_q
-from fastapi import APIRouter, Depends, Form, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from schema.operator_models import *
+from schema.operator_models import SelectQueue, UserDataResponse
 from database.db import get_db
-from database.models import Services, UserData, Counters
-import logging
-from utils.global_settings import settings
-import time
+from database.models import Service, UserData, Counter
+import time, logging
+from status import StatusCode, StatusResponse
+from utils.global_settings import settings, setup_logging
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('logs\\q_system.log', mode='w')
-    ]
-)
+setup_logging()
+logger = logging.getLogger(__name__)
+
+# logging.debug("This is a debug message from my module.")
 
 router = APIRouter(
     prefix="/operator",
     tags= ["operator"]
 )
 
-def create_response(data = None, success = True, error = None):
-    return{
-        'success':success,
-        'data': data,
-        'error':error
-    }
+@router.get("/service")
+async def get_services(db:Session = Depends(get_db)):
+    """
+    Retrieve a list of all services.
 
+    This endpoint returns a list of all services in the system.
 
-@router.get("/service", response_model=None)
-async def select_services(db:Session = Depends(get_db)):
+    Args:
+        db (Session, optional): A database session. Defaults to Depends(get_db).
+
+    Returns:
+        StatusResponse: A response object containing a list of services.
+
+    Raises:
+        HTTPException:
+            - If there's an error during the retrieval process (500).
+    """
     try:
-        services = db.query(Services).all()
-        return create_response(data=services)
+        services = db.query(Service).all()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=create_response(success= False, error={'message': str(e)}))
+        logging.debug(f"get_services failed because {str(e)}")
+        raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
+    return (services)
 
-@router.post("/select_counter")
-async def select_counter(service_id: int):
-    global settings
+@router.get("/counters/{service_id}")
+async def get_counter(service_id: int, db:Session=Depends(get_db)):
+    """
+    Retrieve the counter information for a service.
+
+    This endpoint returns the counter information for a specific service.
+
+    Args:
+        service_id (int): The ID of the service.
+
+    Returns:
+        StatusResponse: A response object containing the counter information.
+
+    Raises:
+        HTTPException:
+            - If the service ID is invalid or not found (400).
+            - If there's an error during the retrieval process (500).
+    """
     try:
-        return create_response(data={"counters": settings.counters[service_id]}) 
+        counters = db.query(Counter).filter(Service.id == service_id).all()
+        # return {"counters": settings.counters[service_id]}
+        return {"counters": counters}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f'counters for the selected service: {settings.counters}')            
+        logging.debug(f"get_counter failed: {str(e)}")
+        raise HTTPException(status_code=StatusCode.BAD_REQUEST.value, detail=StatusCode.BAD_REQUEST.message)
 
-@router.get("/queue")
-async def get_queue(request: SelectQueue, db:Session = Depends(get_db)):
-    service=  db.query(Services).filter(Services.id == request.service_id).first()
-    if service:    
-        queue=(
-            db.query(UserData)
-            .filter(UserData.service_id == request.service_id, UserData.counter == request.counter)
-            .order_by(UserData.pos)
-            .all()
-        )
-        print(f"Queue for service {request.service_id}, counter {request.counter}: {queue}")
-        
-        if not queue:
-            return create_response(data=["queue is empty"], success=True, error=None)
-        else:
-            return create_response(data=queue, success=True)
+@router.get("/queue/{counter_id}")
+async def get_queue(counter_id:int, db:Session = Depends(get_db)):
+    """
+    Retrieve the queue information for a specific service and counter.
 
-    else:
-        raise HTTPException(status_code=500, detail= 'Internal Error')
+    This endpoint returns the queue information for a specific service and counter.
 
-@router.post("/next_user")
-async def pop_next_user(request: SelectQueue, db: Session= Depends(get_db)):
+    Args:
+        request (SelectQueue): A request object containing the service ID and counter.
+        db (Session, optional): A database session. Defaults to Depends(get_db).
+
+    Returns:
+        A response object containing the queue information.
+
+    Raises:
+        HTTPException:
+            - If the service ID is not found (404).
+            - If there's an error during the retrieval process (500).
+    """
+    check_service= db.query(Counter.service_id).filter(Counter.id==counter_id).first()
+    if check_service is None:
+        raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)
+
+    try:
+        queue= db.query(UserData).filter(UserData.counter==counter_id).all()
+        return (queue)
+    except Exception as e:
+        logging.debug(f"Failed get_queue(): {str(e)}")
+        raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
+
+@router.post("/queue/next")
+async def pop_next_user_from_queue(request: SelectQueue, db: Session= Depends(get_db)):
+    """
+    Pop the next user from the queue for a specific service and counter.
+
+    This endpoint removes the next user from the queue for a specific service and counter.
+
+    Args:
+        request (SelectQueue): A request object containing the service ID and counter.
+        db (Session, optional): A database session. Defaults to Depends(get_db).
+
+    Returns:
+        StatusResponse: A response object indicating the success or failure of the operation.
+
+    Raises:
+        HTTPException:
+            - If the service ID is invalid or not found (400).
+            - If there's an error during the retrieval process (500).
+            - If the queue is empty (404).
+    """    
     # finding the user at position 1
-    service = db.query(Services).filter(Services.id == request.service_id).first()
+    service = db.query(Service).filter(Service.id == request.service_id).first()
     if service:
         users = (
             db.query(UserData)
@@ -77,10 +128,10 @@ async def pop_next_user(request: SelectQueue, db: Session= Depends(get_db)):
             .all()
         )
         if not users:
-            raise HTTPException(detail='Not found', status_code=404)
+            raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)
         _q = (
-            db.query(Counters)
-            .filter(Counters.id == request.counter)
+            db.query(Counter)
+            .filter(Counter.id == request.counter)
             .first()
         )
         first_user = users[0]
@@ -89,14 +140,18 @@ async def pop_next_user(request: SelectQueue, db: Session= Depends(get_db)):
             if first_user:
                 _q.in_queue -=1
                 _q.users_processed +=1
-                _q.total_tat = time.time() - _q.total_tat
+                # add processing time to the user 
+                first_user.processing_time = time.time() - first_user.processing_time
+                # add the user processing time to the counters total processing time
+                _q.total_tat = _q.total_tat + first_user.processing_time
                 _q.avg_tat = _q.total_tat/ _q.users_processed
                 try:
                     # db.add()
                     db.commit()
                 except Exception as e:
                     db.rollback()
-                    raise HTTPException(status_code=500, detail=f"Cant process time for user {first_user} because {str(e)}")
+                    logging.debug(f"pop_next_user_from_queue failed because: {str(e)} ")
+                    raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
                 db.delete(first_user)
                 db.commit()
                 settings.counters[request.service_id][request.counter] -= 1 # decrementing the number of users in the counters dictionary 
@@ -119,10 +174,10 @@ async def pop_next_user(request: SelectQueue, db: Session= Depends(get_db)):
 
                 rebalance_q(request.service_id, db)
 
-                return create_response(data={'message':f'Popped User, Rescheduled and Rebalanced the counters in Sevice no.{request.service_id}'})
+                return StatusResponse(status_code=StatusCode.OK.value,status_message=StatusCode.OK.message)
             else:
-                raise HTTPException(status_code=404, detail="No user found")
+                raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)
     else: 
-        # logging.error(f"Error while popping user {first_user.id}")
+        logging.error(f"Error while popping user, service not found")
         db.rollback()
-        raise HTTPException(status_code=404, detail='Not found')
+        raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)

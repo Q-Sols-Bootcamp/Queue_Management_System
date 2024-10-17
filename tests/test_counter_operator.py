@@ -1,15 +1,14 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 from sqlalchemy import text
-from routes.counter_operator import *
-from database.models import Services
-from auth import *
+from routes.counter_operator import get_queue, get_services, select_counter, pop_next_user_from_queue
+from database.models import Service, UserData
+from auth import hash_password
 from database.db import get_db
 from main import app
 from fastapi import HTTPException
 import utils.helpers, utils.global_settings
-from schema.operator_models import *
+from schema.operator_models import SelectQueue
 
 client = TestClient(app)
 
@@ -42,21 +41,21 @@ def setup_db():
     db.commit()
 
 @pytest.mark.asyncio
-async def test_select_services_success(mocker, setup_db):
+async def test_get_services_success(mocker, setup_db):
     db = setup_db
 
     # Mocking functions
-    mocker.patch("database.models.Services", autospec=True)
+    mocker.patch("database.models.Service", autospec=True)
 
     # Add initial services
-    service1 = Services(id=1, name="service1", no_of_counters=1)
-    service2 = Services(id=2, name="service2", no_of_counters=2)
+    service1 = Service(id=1, name="service1", no_of_counters=1)
+    service2 = Service(id=2, name="service2", no_of_counters=2)
     db.add(service1)
     db.add(service2)
     db.commit()
 
     # Request simulation
-    response = await select_services(db)
+    response = await get_services(db)
 
     assert response['success'] == True
     assert response['error'] is None
@@ -66,14 +65,14 @@ async def test_select_services_success(mocker, setup_db):
     assert response['data'][1].name == "service2"
 
 @pytest.mark.asyncio
-async def test_select_services_no_services(mocker, setup_db):
+async def test_get_services_no_services(mocker, setup_db):
     db = setup_db
 
     # Mocking functions
-    mocker.patch("database.models.Services", autospec=True)
+    mocker.patch("database.models.Service", autospec=True)
 
     # Request simulation
-    response = await select_services(db)
+    response = await get_services(db)
 
     assert response['success'] == True
     assert response['error'] is None
@@ -81,18 +80,18 @@ async def test_select_services_no_services(mocker, setup_db):
     assert len(response['data']) == 0
 
 @pytest.mark.asyncio
-async def test_select_services_db_error(mocker, setup_db):
+async def test_get_services_db_error(mocker, setup_db):
     db = setup_db
 
     # Mocking functions
-    mocker.patch("database.models.Services", autospec=True)
+    mocker.patch("database.models.Service", autospec=True)
     
     # Mock the database query to raise an exception
     mocker.patch.object(db, 'query', side_effect=Exception("Database error"))
 
     # Request simulation
     try:
-        await select_services(db)
+        await get_services(db)
         assert False, "Expected HTTPException"
     except HTTPException as e:
         assert e.status_code == 500
@@ -156,7 +155,7 @@ async def test_get_queue_success(mocker, setup_db):
         service_id=test_service, 
     )
     
-    service = Services(id= 1, name= 'test', no_of_counters= 2)
+    service = Service(id= 1, name= 'test', no_of_counters= 2)
     user_data = UserData(name=name, hashed_password=hashed_password, service_id=test_service, counter=test_counter, pos=1)
     db.add(service)
     db.add(user_data)
@@ -191,7 +190,7 @@ async def test_get_queue_empty(mocker, setup_db):
 
     # Mock the service query chain
     mock_service_filter = mock_query.return_value.filter
-    mock_service_filter.return_value.first.return_value = Services(id=1, name="Test Service")
+    mock_service_filter.return_value.first.return_value = Service(id=1, name="Test Service")
 
     # Mock the queue (UserData) query chain
     mock_user_filter = mock_service_filter.return_value.filter
@@ -254,7 +253,7 @@ async def test_get_queue_service_id_not_found(mocker, setup_db):
         assert 'Internal Error' in e.detail
 
 @pytest.mark.asyncio
-async def test_pop_next_user_success(mocker, setup_db):
+async def test_pop_next_user_from_queue_success(mocker, setup_db):
     db = setup_db
     
     # Create test user data
@@ -279,14 +278,14 @@ async def test_pop_next_user_success(mocker, setup_db):
     settings.counters = {1: {1: 10, 2: 20}, 2: {1: 30, 2: 40}}
 
     try:
-        await pop_next_user(request= user_request, db=db)
+        await pop_next_user_from_queue(request= user_request, db=db)
         # assert False, "Expected HTTPException"
     except HTTPException as e:
         assert e.status_code == 404
         assert e.detail == "Not found"
 
 @pytest.mark.asyncio
-async def test_pop_next_user_empty(mocker, setup_db):
+async def test_pop_next_user_from_queue_empty(mocker, setup_db):
     db = setup_db
 
     # Mocking functions
@@ -302,7 +301,7 @@ async def test_pop_next_user_empty(mocker, setup_db):
     # Request simulation
 
     try:
-        response = await pop_next_user(request= user_request, db=db)
+        response = await pop_next_user_from_queue(request= user_request, db=db)
     except HTTPException as e:
         assert e.status_code == 404
         assert e.detail == 'Not found'

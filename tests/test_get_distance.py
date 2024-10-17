@@ -1,19 +1,17 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
+from fastapi import HTTPException
 from sqlalchemy import text
-from routes.get_distance import router
-from database.models import UserData, Counters
+from database.models import UserData#, Counter
 from schema.distance_models import Location
-from utils.global_settings import settings
-from auth import *
+from auth import hash_password, SECRET_KEY, ALGORITHM
 from database.db import get_db
 from main import app
 from pydantic import BaseModel
 from datetime import timedelta, datetime
 from routes.get_distance import update_eta
-from schema.distance_models import *
-
+from schema.distance_models import UpdateEtaReaquest
+from jose import jwt#, JWTError
 
 _off = text("SET FOREIGN_KEY_CHECKS = 0;")
 _on = text("SET FOREIGN_KEY_CHECKS = 1;")

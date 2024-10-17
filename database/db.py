@@ -1,9 +1,12 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker,declarative_base
-# import pymysql
-# pymysql.install_as_MySQLdb()
+import os
+from dotenv import load_dotenv
 
-DATABASE_URL = "mysql+mysqlconnector://sqluser:password@localhost/mock_queue_db"
+load_dotenv()
+
+
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 #creating new engine instance to interact with the database and session object
 engine = create_engine(DATABASE_URL, echo=True)

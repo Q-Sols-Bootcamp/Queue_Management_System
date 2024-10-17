@@ -1,41 +1,46 @@
 from fastapi import APIRouter, Depends, HTTPException, Depends
 from sqlalchemy.orm import Session
 from database.db import get_db
-from database.models import UserData#, settings
-from schema.user_models import *
-from schema.distance_models import *
+from database.models import UserData, Counter
+from schema.user_models import GenerateTokenRequest, UserLoginRequest, UserResponse
 from utils.global_settings import settings
-from utils.helpers import *
-import logging
-from auth import *
+from utils.helpers import get_ETA, is_here
+import time, logging
+from auth import create_access_token, hash_password, verify_password
+from status import StatusCode, StatusResponse
+from utils.global_settings import settings, setup_logging
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('logs\\q_system.log', mode='w')
-    ]
-)
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(
     prefix="/user",
     tags=["user"]
 )
-def create_response(data= None, success= True, error= None):
-    return{
-        "data":data,
-        "success": success,
-        "error": error 
-    }
 
-
-@router.post("/generate_token")
+@router.post("/generate_token", response_model=StatusResponse)
 async def generate_token(request: GenerateTokenRequest, db: Session = Depends(get_db)):
-    global settings
-    
+    """
+    Generate a token for a new user.
+
+    This endpoint generates a token for a new user, assigns them to a counter with the fewest users, 
+    and updates the queue positions based on the user's ETA.
+
+    Args:
+        request (GenerateTokenRequest): A request object containing the user's name, password, 
+                                        service ID, and location.
+        db (Session, optional): A database session. Defaults to Depends(get_db).
+
+    Returns:
+        StatusResponse: A response object indicating the status of the token generation.
+
+    Raises:
+        HTTPException: If the request is invalid (e.g., missing name or password), 
+                        if the user name is already taken, or if there is an internal server error.
+    """
     if not request.name or not request.password:
-        raise HTTPException(status_code=400, detail="Name and password are required")
+        raise HTTPException(status_code=StatusCode.BAD_REQUEST.value, detail=StatusCode.BAD_REQUEST.message)
 
     # checking to see if name is already taken since name is a unique field also acting as a user name
     existing_user=(
@@ -44,7 +49,7 @@ async def generate_token(request: GenerateTokenRequest, db: Session = Depends(ge
         .first()
     )
     if existing_user:
-        raise HTTPException(status_code=422, detail= "Name already taken")
+        raise HTTPException(status_code=StatusCode.CONFLICT.value, detail= StatusCode.CONFLICT.message)
     
     hashed_password = hash_password(request.password)
 
@@ -53,7 +58,7 @@ async def generate_token(request: GenerateTokenRequest, db: Session = Depends(ge
 
     # Check if the service exists and retrieve the counters for the selected service
     if request.service_id not in settings.counters:
-        raise HTTPException(status_code=400, detail=f"Invalid service selected: {request.service_id}")
+        raise HTTPException(status_code=StatusCode.BAD_REQUEST.value, detail=StatusCode.BAD_REQUEST.message)
 
     service_counters = settings.counters[request.service_id]
     logging.info(f"Service counters for service {request.service_id}: {service_counters}")
@@ -72,6 +77,9 @@ async def generate_token(request: GenerateTokenRequest, db: Session = Depends(ge
         db.add(new_user)
         db.commit()  # Commit to generate a valid user ID
         db.refresh(new_user)  # Refresh the user to fetch the latest state
+        # Update the counters dictionary to reflect the newly added user
+        settings.counters[request.service_id][selected_counter] += 1
+        logging.debug(f"Adding the new user {request.name} we have: {settings.counters}")
 
         # Update queue position based on ETA
         # Fetch all users in the selected counter, sorted by ETA
@@ -89,57 +97,75 @@ async def generate_token(request: GenerateTokenRequest, db: Session = Depends(ge
         db.commit()  # Commit changes to save the updated positions
 
         if is_here(counter_id=selected_counter, db=db) == True:
-            processing_counter= (
-                db.query(Counters)
-                .filter(Counters.id == selected_counter)
+            first_user= (
+                db.query(UserData)
+                .filter(UserData.counter == selected_counter)
+                .order_by(UserData.pos)
                 .first()
             )
-            if processing_counter:
-                processing_counter.total_tat = time.time() - processing_counter.total_tat
+            if first_user:
+                first_user.processing_time = time.time() - first_user.processing_time
                 try:
                     # db.add()
                     db.commit()
                 except Exception as e:
                     db.rollback()
-                    raise HTTPException(status_code=500, detail=f"Can not start processing time for counter no{selected_counter} because {str(e)}")
+                    raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
             else:
-                raise HTTPException(status_code=500, detail=f"No counter found with id {selected_counter}")
+                raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
         
 
-        # Update the counters dictionary to reflect the newly added user
-        settings.counters[request.service_id][selected_counter] += 1
+        
         processing_counter= (
-                db.query(Counters)
-                .filter(Counters.id == selected_counter)
+                db.query(Counter)
+                .filter(Counter.id == selected_counter)
                 .first()
             )
         processing_counter.in_queue +=1
+        logging.info(f"Adding the new user  {request.name} we have: {processing_counter.in_queue} in queue")
+
         try:
             # db.add()
             db.commit()
         except Exception as e:
             db.rollback()
-            raise HTTPException(status_code=500, detail=f"Failed to increment in_queue value for {selected_counter} because {str(e)}")
+            raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
         
         logging.info(f"Updated counters: {settings.counters}")
 
     except Exception as e:
         db.rollback()  # Rollback if there are any errors
         logging.error(f"Failed to register user {request.name}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to register user: {new_user.name} because {str(e)}" )
-
+        raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
+    user_to_return= UserResponse(id=new_user.id, name=new_user.name, counter= new_user.counter, pos=new_user.pos, eta=new_user.ETA)
     # Return a success message
-    return create_response(data={'message': f"User {request.name} registered to counter {selected_counter} at position {new_user.pos}"})
+    return StatusResponse(status_code=StatusCode.CREATED.value, status_message=StatusCode.CREATED.message, data=user_to_return)
 
-@router.post("/login")
+@router.post("/login", response_model=StatusResponse)
 async def login_user(request: UserLoginRequest, db: Session = Depends(get_db)):
+    """
+    Authenticate a user and generate an access token.
+
+    This endpoint verifies the user's credentials and, if valid, generates an access token for the user.
+
+    Args:
+        request (UserLoginRequest): A request object containing the user's name and password.
+        db (Session, optional): A database session. Defaults to Depends(get_db).
+
+    Returns:
+        StatusResponse: A response object containing the access token, token type, username, 
+                        counter number, and position in the queue.
+
+    Raises:
+        HTTPException: If the user is not found (404) or if the credentials are invalid (401).
+    """
     user= (
         db.query(UserData)
         .filter(UserData.name == request.name)
         .first()
     )
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)
 
     user = (
         db.query(UserData)
@@ -152,4 +178,8 @@ async def login_user(request: UserLoginRequest, db: Session = Depends(get_db)):
 
     access_token = create_access_token(data= {"subject": user.name})
 
-    return create_response(data=[{"access_token": access_token, "token_type":"bearer"}, {'username': user.name, 'counter number': user.counter, 'position':user.pos}])
+    return StatusResponse(
+        StatusCode.OK.value,
+        StatusCode.OK.message,
+        [{"access_token": access_token, "token_type":"bearer"}, {'username': user.name, 'counter number': user.counter, 'position':user.pos}],
+    )

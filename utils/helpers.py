@@ -1,24 +1,21 @@
-import logging
 import requests, re
 from schema.distance_models import *
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from database.models import UserData, Counters#, Services
+from database.models import UserData, Counter#, Service
 import time
+from status import StatusCode
 from utils.global_settings import (
     settings,
     DISTANCEMATRIX_API_KEY,
     Q_SOLUTIONS_COORDS
 )
+import logging
+from utils.global_settings import settings, setup_logging
 
-logging.basicConfig(
-    level=logging.DEBUG, 
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("logs\\q_system.log", mode='w')
-        # logging.StreamHandler()
-    ]
-)
+setup_logging()
+logger = logging.getLogger(__name__)
+
 logging.getLogger("sqlalchemy.engine").setLevel(logging.ERROR)  # Only log errors for SQLAlchemy
 logging.getLogger("sqlalchemy.pool").setLevel(logging.ERROR)
 
@@ -28,6 +25,20 @@ logging.getLogger("uvicorn.error").setLevel(logging.ERROR)
 
 # dependency
 def clear_queue(db):
+    """
+    Clears the database by deleting all user data.
+
+    Args:
+        db (Session): A database session.
+
+    Returns:
+        None
+
+    Notes:
+        - This function is used to reset the database.
+        - It permanently deletes all user data, so use with caution.
+        - Mostly used for testing purposes.
+    """
     # imported here to avoid circular imports
     logging.info("clearing database")
     from database.models import UserData
@@ -35,6 +46,21 @@ def clear_queue(db):
     db.commit()
 
 def get_ETA(location: Location):
+    """
+    Calculate the estimated time of arrival (ETA) for a user at a given location.
+
+    This function uses the Distance Matrix API to calculate the travel time from the user's location to the Q Solutions coordinates.
+
+    Args:
+        location (Location): The user's location.
+
+    Returns:
+        int: The estimated time of arrival in minutes.
+
+    Raises:
+        HTTPException:
+            - If there's an error during the API request (500).
+    """    
     try:
         response = requests.get(
             f"https://api.distancematrix.ai/maps/api/distancematrix/json",
@@ -67,13 +93,25 @@ def get_ETA(location: Location):
     
 
 async def check_if_serving(counter_id: int, db:Session):
+    """
+    Check if a counter is currently serving a user.
+
+    This function checks if a counter is currently serving a user by checking if the first user in the queue has an ETA of 0.
+
+    Args:
+        counter_id (int): The ID of the counter to check.
+        db (Session): A database session.
+
+    Raises:
+        HTTPException:
+            - If there are no users in the counter (400).
+    """
     users= (
         db.query(UserData)
         .filter(UserData.counter == counter_id)
         .order_by(UserData.pos)
         .all()
     )
-    global settings
     if users:
         first_user = users[0]
         if first_user.ETA == 0:
@@ -86,7 +124,25 @@ async def check_if_serving(counter_id: int, db:Session):
         raise HTTPException(status_code=400, detail=f"No users in counter {counter_id}")
 
 async def is_here(counter_id:int, db: Session):
-    if Counters.id == counter_id:
+    """
+    Check if the first user in the queue for a specific counter has arrived.
+
+    This function checks if the first user in the queue for the specified counter has an ETA of 0,
+    indicating that they have arrived at the counter.
+
+    Args:
+        counter_id (int): The ID of the counter to check.
+        db (Session): A database session.
+
+    Returns:
+        bool: True if the first user has arrived (ETA = 0), False otherwise.
+
+    Raises:
+        HTTPException:
+            - If the counter is empty (404).
+            - If the counter ID is invalid (400).
+    """
+    if Counter.id == counter_id:
         first_user= (
             db.query(UserData)
             .filter(UserData.counter == counter_id)
@@ -94,22 +150,37 @@ async def is_here(counter_id:int, db: Session):
             .first()   
         )
         # processing_counter= (
-        #     db.query(Counters)
-        #     .filter(Counters.id == counter_id)
+        #     db.query(Counter)
+        #     .filter(Counter.id == counter_id)
         #     .first()
         # )
         if first_user:
             if first_user.ETA == 0:
-                # processing_counter.total_tat = time.time()
                 return True
             else:
                 return False
         else:
-            raise HTTPException(status_code=500, detail=f"Counter no.{counter_id} is  empty")        
+            raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)
     else:
-        raise HTTPException(status_code=500, detail=f"Counter no.{counter_id} is invalid")        
+        raise HTTPException(status_code=StatusCode.BAD_REQUEST.value, detail=StatusCode.BAD_REQUEST.message)
 
 async def rebalance_q(service_id:int, db:Session):
+    """
+    Rebalance the queue for a specific service.
+
+    This function rebalances the queue for the specified service by moving users from the counter with the longest queue to the counter with the shortest queue.
+
+    Args:
+        service_id (int): The ID of the service to rebalance.
+        db (Session): A database session.
+
+    Returns:
+        None
+
+    Notes:
+        - This function assumes that the service has at least two counters.
+        - It moves users from the counter with the longest queue to the counter with the shortest queue until the queues are balanced.
+    """
     service_counters = settings.counters[service_id]
     if len(service_counters) > 1:
         
@@ -117,8 +188,8 @@ async def rebalance_q(service_id:int, db:Session):
         shortest_queues = [counter for counter, users in service_counters.items() if users == min_queue]
         _minQ = shortest_queues[0]  # Select the first counter with the least number of users
         min_counter = (
-            db.query(Counters)
-            .filter(Counters.id == _minQ)
+            db.query(Counter)
+            .filter(Counter.id == _minQ)
             .first()
         )
 
@@ -126,8 +197,8 @@ async def rebalance_q(service_id:int, db:Session):
         longest_queues = [counter for counter, users in service_counters.items() if users==max_queue]
         _maxQ = longest_queues[0]
         max_counter = (
-            db.query(Counters)
-            .filter(Counters.id == _maxQ)
+            db.query(Counter)
+            .filter(Counter.id == _maxQ)
             .first()
         )
 
