@@ -8,9 +8,35 @@ from routes.user import router as user_router
 from routes.services_crud import router as services_crud_router
 from routes.get_distance import router as distance_router
 from auth import verify_access_token
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+env_variables = ['DISTANCEMATRIX_API_KEY', 'SECRET_KEY', 'ALGORITHM', 'DATABASE_URL']
+def check_env():
+    """
+    Validate environment variables.
+
+    This function checks if the required environment variables are set.
+    If any variable is empty or not set, it prints an error message and exits the program.
+
+    Args:
+        None
+
+    Returns:
+        None
+    """
+    for var in env_variables:
+        if not os.getenv('var'):
+            print(f"{var} is empty or not set")
+            exit(1)
+        else:
+            print("Environment variable validation completed")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    check_env()
     db = SessionLocal()
     try:
         clear_queue(db)
