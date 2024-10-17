@@ -44,7 +44,7 @@ async def add_service(request: CreateServiceRequest, db: Session = Depends(get_d
         # Create a new service in the database
         new_service = Service(name=request.name, no_of_counters=request.no_of_counters)
         db.add(new_service)
-        db.commit()  # Commit to assign an ID to new_service
+        db.flush()  # Commit to assign an ID to new_service
 
         # for i in range(request.no_of_counters):
         #     new_counter = Counters(no_of_counters=request.no_of_counters)
@@ -58,16 +58,20 @@ async def add_service(request: CreateServiceRequest, db: Session = Depends(get_d
 
         # Use global_counter to assign unique counter numbers across all services
 
-        
-        for _ in range(request.no_of_counters):
-            service_counters[settings.global_counter] = 0  # No users in the counter at start
-            logging.info(f"Assigned counter {settings.global_counter} to service {new_service.name}")
-            new_counter = Counter(id=settings.global_counter, service_id = new_service.id)
-            new_counters.append(new_counter)
-        
-            settings.global_counter += 1  # Increment global counter for the next assignment
-        db.add_all(new_counters)
-        db.commit()
+        try:
+            for _ in range(request.no_of_counters):
+                service_counters[settings.global_counter] = 0  # No users in the counter at start
+                logging.info(f"Assigned counter {settings.global_counter} to service {new_service.name}")
+                new_counter = Counter(id=settings.global_counter, service_id = new_service.id)
+                new_counters.append(new_counter)
+            
+                settings.global_counter += 1  # Increment global counter for the next assignment
+            db.add_all(new_counters)
+            db.commit()
+        except SQLAlchemyError as e:
+            db.rollback()
+            logging.error(f"Error occurred while assigning counters: {str(e)}")
+            raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
         # db.refresh(new_counters)
 
         # Add this service's counters to the global counters dictionary using the service ID
@@ -111,84 +115,49 @@ async def update_service(request: UpdateServiceRequest, db: Session = Depends(ge
             - If there are active users in the service queues (400).
             - If there's an error updating the service (500).
     """    
+    service = db.query(Service).filter(Service.id == request.service_id).first()
+    if not service:
+        raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)
+
+    # Check for active users in the service queues
+    if db.query(UserData).filter(UserData.service_id == request.service_id).count() > 0:
+        raise HTTPException(status_code=StatusCode.BAD_REQUEST.value, detail=StatusCode.BAD_REQUEST.message)
+
+    # Update service name if provided
+    if request.name:
+        service.name = request.name
+
+    # Update number of counters if provided
+    if request.no_of_counters is not None:
+        current_counters = len(settings.counters.get(service.id, {}))
+        if request.no_of_counters > current_counters:
+            for _ in range(current_counters + 1, request.no_of_counters + 1):
+                new_counter = Counter(id=settings.global_counter, service_id=service.id)
+                db.add(new_counter)
+                settings.counters[service.id][settings.global_counter] = 0  # Initialize new counter
+                settings.global_counter += 1
+        else:
+            for i in range(current_counters, request.no_of_counters, -1):
+                if settings.counters[service.id][i] > 0:
+                    raise HTTPException(status_code=StatusCode.BAD_REQUEST.value, detail=StatusCode.BAD_REQUEST.message)
+                del settings.counters[service.id][i]
+                db.query(Counter).filter(Counter.id == i).delete()
+
+        service.no_of_counters = request.no_of_counters
+
+    # Commit changes to the database
     try:
-        # Find the service by ID
-        service = db.query(Service).filter(Service.id == request.service_id).first()
-        
-        if not service:
-            raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)
-
-        # Check if there are active users in the service queues before updating
-        active_users = db.query(UserData).filter(UserData.service_id == request.service_id).count()
-        if active_users > 0:
-            raise HTTPException(status_code=StatusCode.BAD_REQUEST.value, detail=StatusCode.BAD_REQUEST.message)
-
-        # Update service name if provided
-        if request.name:
-            service.name = request.name
-
-        # Update number of counters if provided
-        if request.no_of_counters is not None:
-            current_counters = len(settings.counters.get(service.id, {}))
-
-            if request.no_of_counters != current_counters:
-                # Adjust global queues (adding/removing counters)
-                if request.no_of_counters > current_counters:
-                    # Add new counters (initialize them with 0 users)
-                    for i in range(current_counters + 1, request.no_of_counters + 1):
-                        settings.counters[service.id][i] = 0  # Initialize new counter with 0 users
-                        for _ in range(request.no_of_counters-current_counters):
-                            new_counters = Counter(id=settings.global_counter, service_id = service.id)
-                            try:
-                                db.add(new_counters)
-                                db.commit()
-                                db.refresh(new_counters)
-                            except Exception as e:
-                                raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
-                        settings.global_counter += 1 # incrementing the global_counter variable that determines counter_id globally 
-                else:
-                    # Remove counters (ensure they are empty before removing)
-                    for i in range(current_counters, request.no_of_counters, -1):
-                        if settings.counters[service.id][i] > 0:
-                            raise HTTPException(status_code=400, detail=(f'Counter {i} has active users'))
-                        del settings.counters[service.id][i]  # Safely remove the empty counter
-                        try:
-                            to_del = (
-                                db.query(Counter)
-                                .filter(Counter.id == i)
-                                .first()
-                            )
-                            db.delete(to_del)
-                        except:
-                            db.rollback()
-                            raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
-                        settings.global_counter -= 1 # decrementing the global_counter variable that determines counter_id globally 
-            
-            # Update the number of counters in the database (service model)
-            service.no_of_counters = request.no_of_counters
-            logging.info(f"Updating no_of_counters to {request.no_of_counters}")
-
-        # Persist changes in the database
-            try:
-                db.add(service)
-                db.commit()
-                db.refresh(service)
-                # Query again to check if the changes are reflected
-                updated_service = db.query(Service).filter(Service.id == request.service_id).first()
-                logging.info(f"Updated service has no_of_counters: {updated_service.no_of_counters}")
-            except SQLAlchemyError as e:
-                logging.debug(f"Update_service failed because: {str(e)}")
-                db.rollback()
-                raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
-            service_to_return = ServiceResponse(id=updated_service.id, name=updated_service.name, no_of_counters=updated_service.no_of_counters)
-        return StatusResponse(status_code=StatusCode.OK.value,status_message=StatusCode.OK.message, data=service_to_return)
-    except Exception as e:
+        db.commit()
+        db.refresh(service)
+    except SQLAlchemyError as e:
         db.rollback()
-        logging.error(f"Error updating service because: {str(e)}")
+        logging.error(f"Update_service failed because: {str(e)}")
         raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
 
+    service_to_return = ServiceResponse(id=service.id, name=service.name, no_of_counters=service.no_of_counters)
+    return StatusResponse(status_code=StatusCode.OK.value, status_message=StatusCode.OK.message, data=service_to_return)
 
-
+    
 # Delete a service
 @router.delete("/{service_id}", response_model=StatusResponse)
 async def delete_service(service_id: int, db: Session = Depends(get_db)):
@@ -235,10 +204,15 @@ async def delete_service(service_id: int, db: Session = Depends(get_db)):
         del settings.counters[service_id]
 
         # Delete the service from DB
-        db.delete(service)
-        for items in counters_to_del:
-            db.delete(items)
-        db.commit()
+        try:
+            db.delete(service)
+            for items in counters_to_del:
+                db.delete(items)
+            db.commit()
+        except SQLAlchemyError as e:
+            db.rollback()
+            logging.error(f"failed delete_service: {str(e)}")
+            raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
         return StatusResponse(status_code=StatusCode.OK.value,status_message= StatusCode.OK.message, data=to_return)
 
     except Exception as e:

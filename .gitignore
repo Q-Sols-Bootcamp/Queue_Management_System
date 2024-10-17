@@ -27,3 +27,4 @@ __pycache__
 Thumbs.db
 
 .pytest_cache
+logs/q_system.log
