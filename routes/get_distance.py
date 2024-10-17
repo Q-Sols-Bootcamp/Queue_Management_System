@@ -103,7 +103,7 @@ async def update_eta(request: UpdateEtaReaquest, db: Session = Depends(get_db)):
     else:
         raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)
 
-    db.commit()
+    db.flush()
     db.refresh(user_to_update)
     logging.debug(f"user_to_update.counter = {user_to_update.counter}")
     
@@ -117,7 +117,7 @@ async def update_eta(request: UpdateEtaReaquest, db: Session = Depends(get_db)):
     for new_pos, user in enumerate(users_in_counter, start=1):
         user.pos = new_pos
     try:
-        db.commit()
+        db.flush()
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=StatusCode.BAD_REQUEST.value, detail=StatusCode.BAD_REQUEST.message)
