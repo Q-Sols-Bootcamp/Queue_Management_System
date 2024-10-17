@@ -8,12 +8,17 @@ from routes.user import router as user_router
 from routes.services_crud import router as services_crud_router
 from routes.get_distance import router as distance_router
 from auth import verify_access_token
-import os
+import os, logging
+from utils.global_settings import setup_logging
 from dotenv import load_dotenv
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 env_variables = ['DISTANCEMATRIX_API_KEY', 'SECRET_KEY', 'ALGORITHM', 'DATABASE_URL']
+logging.info(f"{env_variables}")
 def check_env():
     """
     Validate environment variables.
@@ -28,11 +33,11 @@ def check_env():
         None
     """
     for var in env_variables:
-        if not os.getenv('var'):
-            print(f"{var} is empty or not set")
+        if not os.getenv(var):
+            logging.debug(f"{var} is empty or not set")
             exit(1)
         else:
-            print("Environment variable validation completed")
+            logging.debug(f"Environment variable validation completed: {var}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
