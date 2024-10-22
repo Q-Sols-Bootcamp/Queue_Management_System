@@ -41,7 +41,7 @@ def check_env():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # check_env()
+    check_env()
     db = SessionLocal()
     try:
         clear_queue(db)
