@@ -9,6 +9,8 @@ import time, logging
 from auth import create_access_token, hash_password, verify_password
 from status import StatusCode, StatusResponse
 from utils.global_settings import settings, setup_logging
+from sqlalchemy.exc import SQLAlchemyError
+
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -75,7 +77,7 @@ async def generate_token(request: GenerateTokenRequest, db: Session = Depends(ge
 
     try:
         db.add(new_user)
-        db.commit()  # Commit to generate a valid user ID
+        db.flush()  # Commit to generate a valid user ID
         db.refresh(new_user)  # Refresh the user to fetch the latest state
         # Update the counters dictionary to reflect the newly added user
         settings.counters[request.service_id][selected_counter] += 1
@@ -94,7 +96,7 @@ async def generate_token(request: GenerateTokenRequest, db: Session = Depends(ge
         for index, user in enumerate(users_in_counter, start=1):
             user.pos = index
 
-        db.commit()  # Commit changes to save the updated positions
+        db.flush()  # Commit changes to save the updated positions
 
         if is_here(counter_id=selected_counter, db=db) == True:
             first_user= (
@@ -107,8 +109,9 @@ async def generate_token(request: GenerateTokenRequest, db: Session = Depends(ge
                 first_user.processing_time = time.time() - first_user.processing_time
                 try:
                     # db.add()
-                    db.commit()
-                except Exception as e:
+                    db.flush()
+                except SQLAlchemyError as e:
+                    logging.error(f"generate_token failed: {str(e)}")
                     db.rollback()
                     raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
             else:
@@ -127,7 +130,8 @@ async def generate_token(request: GenerateTokenRequest, db: Session = Depends(ge
         try:
             # db.add()
             db.commit()
-        except Exception as e:
+        except SQLAlchemyError as e:
+            logging.error(f"generate_token failed: {str(e)}")
             db.rollback()
             raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
         
@@ -174,12 +178,12 @@ async def login_user(request: UserLoginRequest, db: Session = Depends(get_db)):
     )
 
     if not user or not verify_password(request.password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=StatusCode.UNAUTHORIZED.value, detail=StatusCode.UNAUTHORIZED.message)
 
     access_token = create_access_token(data= {"subject": user.name})
 
     return StatusResponse(
-        StatusCode.OK.value,
-        StatusCode.OK.message,
-        [{"access_token": access_token, "token_type":"bearer"}, {'username': user.name, 'counter number': user.counter, 'position':user.pos}],
+        status_code=StatusCode.OK.value,
+        status_message=StatusCode.OK.message,
+        data=[{"access_token": access_token, "token_type":"bearer"}, {'username': user.name, 'counter number': user.counter, 'position':user.pos}],
     )
