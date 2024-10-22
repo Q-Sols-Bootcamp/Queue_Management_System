@@ -20,6 +20,7 @@ settings = Settings()
 DISTANCEMATRIX_API_KEY = os.getenv('DISTANCEMATRIX_API_KEY')
 Q_SOLUTIONS_COORDS = (24.85265469425946, 67.00765930367423)
 
+
 def setup_logging():
     log_file_path = os.path.join('logs', 'q_system.log')
 
