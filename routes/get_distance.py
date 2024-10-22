@@ -1,14 +1,14 @@
 import time
-from fastapi import APIRouter, Depends, HTTPException, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database.db import get_db
-from database.models import UserData, Counter
-import os, re, httpx, logging
+from database.models import UserData#, Counter
+import re, httpx, logging
 from dotenv import load_dotenv
 from schema.distance_models import UpdateEtaReaquest, UpdateUserResponse
 from utils.helpers import is_here
-from utils.global_settings import setup_logging
-from status import StatusCode, StatusResponse
+from utils.global_settings import setup_logging, DISTANCEMATRIX_API_KEY, Q_SOLUTIONS_COORDS
+from status import StatusCode, StatusResponse, map_http_status_to_enum
 from sqlalchemy.exc import SQLAlchemyError
 
 load_dotenv()
@@ -21,10 +21,6 @@ router = APIRouter(
     tags=["distance"]
 )
 
-# Predefined coordinates (Q-Solutions)
-# Q_SOLUTIONS_COORDS = (24.943884886081435, 67.13863447171319) //dow uni coords
-DISTANCEMATRIX_API_KEY = os.getenv('DISTANCEMATRIX_API_KEY')
-Q_SOLUTIONS_COORDS = (24.85265469425946, 67.00765930367423)
 
 @router.put("",response_model= StatusResponse)
 async def update_eta(request: UpdateEtaReaquest, db: Session = Depends(get_db)):
@@ -47,17 +43,33 @@ async def update_eta(request: UpdateEtaReaquest, db: Session = Depends(get_db)):
     """
     try:
         response = httpx.get(
-            f"https://api.distancematrix.ai/maps/api/distancematrix/json",
+            "https://api.distancematrix.ai/maps/api/distancematrix/json",
             params={
                 "origins": f"{request.location.latitude},{request.location.longitude}",
                 "destinations": f"{Q_SOLUTIONS_COORDS[0]},{Q_SOLUTIONS_COORDS[1]}",
                 "key": DISTANCEMATRIX_API_KEY
             }
         )
+        response.raise_for_status()  # Raises an HTTPStatusError for bad responses
+
+        data = response.json()
+
+    except httpx.HTTPStatusError as http_err:
+        logging.debug(f"HTTP error occurred: {http_err}")
+        mapped_status = map_http_status_to_enum(http_err.response.status_code)
+        raise HTTPException(status_code=mapped_status.code, detail=http_err.response.text)
+    
+    except httpx.RequestError as req_err:
+        logging.debug(f"Request error occurred: {req_err}")
+        raise HTTPException(status_code=StatusCode.SERVICE_UNAVAILABLE.code, detail=StatusCode.SERVICE_UNAVAILABLE.message)
+    
+    except ValueError as json_err:
+        logging.debug(f"JSON decoding error: {json_err}")
+        raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.code, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
+
     except Exception as e:
-        logging.debug(f"update_eta failed: {str(e)}")
-        raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.value, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
-    data = response.json()
+        logging.debug(f"Unexpected error: {str(e)}")
+        raise HTTPException(status_code=StatusCode.INTERNAL_SERVER_ERROR.code, detail=StatusCode.INTERNAL_SERVER_ERROR.message)
 
     if "rows" in data and data["rows"]:
         # distance = data["rows"][0]["elements"][0]["distance"]["text"]
@@ -91,7 +103,7 @@ async def update_eta(request: UpdateEtaReaquest, db: Session = Depends(get_db)):
     else:
         raise HTTPException(status_code=StatusCode.NOT_FOUND.value, detail=StatusCode.NOT_FOUND.message)
 
-    db.commit()
+    db.flush()
     db.refresh(user_to_update)
     logging.debug(f"user_to_update.counter = {user_to_update.counter}")
     
@@ -101,11 +113,11 @@ async def update_eta(request: UpdateEtaReaquest, db: Session = Depends(get_db)):
         .order_by(UserData.ETA)
         .all()
     )
-    updated_user = UpdateUserResponse(userid=user_to_update.id, updated_eta=user_to_update.ETA)
+    updated_user = UpdateUserResponse(userid=user_to_update.id, update_eta=user_to_update.ETA)
     for new_pos, user in enumerate(users_in_counter, start=1):
         user.pos = new_pos
     try:
-        db.commit()
+        db.flush()
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=StatusCode.BAD_REQUEST.value, detail=StatusCode.BAD_REQUEST.message)

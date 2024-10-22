@@ -16,6 +16,8 @@ __pycache__
 *.sqlite3
 
 # Logs and local configuration files
+logs/q_system.log
+logs/
 *.log
 *.env
 .DS_Store
@@ -27,4 +29,3 @@ __pycache__
 Thumbs.db
 
 .pytest_cache
-logs/q_system.log
